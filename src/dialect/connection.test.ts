@@ -1,58 +1,210 @@
-import { expect } from 'chai';
-import { createConnection } from '../path_to_your_connection_module';
+import { RootOperationNode } from "kysely";
+import oracledb from "oracledb";
+import { describe, expect, it, vi } from "vitest";
+import { OracleDialect } from "./dialect";
 
-describe('Connection Tests', () => {
-    let connection;
-
-    beforeEach(async () => {
-        connection = await createConnection();
-    });
-
-    afterEach(async () => {
-        await connection.close();
-    });
-
-    it('should connect successfully', async () => {
-        await expect(connection.connect()).to.eventually.be.fulfilled;
-    });
-
-    it('should throw an error for invalid connection parameters', async () => {
-        const invalidConnection = createConnection({ /* invalid params */ });
-        await expect(invalidConnection.connect()).to.be.rejectedWith('Invalid connection parameters');
-    });
-
-    it('should execute a query successfully', async () => {
-        const result = await connection.query('SELECT * FROM users');
-        expect(result).to.be.an('array');
-    });
-
-    it('should yield rows correctly for streamQuery method', async () => {
-        const results = [];
-        const queryStreamMock = jest.fn().mockReturnValue({
-            [Symbol.asyncIterator]() {
-                let index = 0;
-                return {
-                    next() {
-                        if (index < 3) {
-                            return Promise.resolve({ value: { id: index, name: `User${index}` }, done: false });
-                        }
-                        return Promise.resolve({ done: true });
-                    },
-                };
-                index++;
-            }
+describe("OracleConnection", () => {
+    it("should be initialised with a unique identifier", async () => {
+        const dialect = new OracleDialect({
+            pool: await oracledb.createPool({
+                user: process.env.DB_USER,
+            }),
         });
 
-        connection.queryStream = queryStreamMock;
+        const driver = dialect.createDriver();
 
-        for await (const row of connection.streamQuery('SELECT * FROM users')) {
-            results.push(row);
+        const connection = await driver.acquireConnection();
+
+        expect(connection.identifier).toBeDefined();
+    });
+    it("should return rows when executing a query", async () => {
+        const dialect = new OracleDialect({
+            pool: await oracledb.createPool({
+                user: process.env.DB_USER,
+            }),
+        });
+
+        const driver = dialect.createDriver();
+
+        const connection = await driver.acquireConnection();
+
+        const mockedExecute = vi.spyOn(connection.connection, "execute").mockImplementation(async () => {
+            return {
+                rows: [{ id: 1 }],
+                rowsAffected: 0,
+            };
+        });
+
+        const result = await connection.executeQuery({
+            sql: "select * from dual",
+            parameters: [],
+            query: {} as RootOperationNode,
+            queryId: { queryId: "test-id" },
+        });
+
+        expect(result.rows).toEqual([{ id: 1 }]);
+
+        mockedExecute.mockRestore();
+    });
+    it("should return rows affected when executing a query", async () => {
+        const dialect = new OracleDialect({
+            pool: await oracledb.createPool({
+                user: process.env.DB_USER,
+            }),
+        });
+
+        const driver = dialect.createDriver();
+
+        const connection = await driver.acquireConnection();
+
+        const mockedExecute = vi.spyOn(connection.connection, "execute").mockImplementation(async () => {
+            return {
+                rows: [],
+                rowsAffected: 1,
+            };
+        });
+
+        const result = await connection.executeQuery({
+            sql: "select * from dual",
+            parameters: [],
+            query: {} as RootOperationNode,
+            queryId: { queryId: "test-id" },
+        });
+
+        expect(result.numAffectedRows).toEqual(BigInt(1));
+
+        mockedExecute.mockRestore();
+    });
+    it("should format a query with bind params for logging", async () => {
+        const dialect = new OracleDialect({
+            pool: await oracledb.createPool({
+                user: process.env.DB_USER,
+            }),
+        });
+
+        const driver = dialect.createDriver();
+
+        const connection = await driver.acquireConnection();
+
+        const sql = connection.formatQueryForLogging({
+            sql: "select :1 from dual",
+            parameters: ["id"],
+            query: {} as RootOperationNode,
+            queryId: { queryId: "test-id" },
+        });
+
+        expect(sql).toBe("select 'id' from dual");
+    });
+    it("should format date bind param for logging", async () => {
+        const dialect = new OracleDialect({
+            pool: await oracledb.createPool({
+                user: process.env.DB_USER,
+            }),
+        });
+
+        const driver = dialect.createDriver();
+
+        const connection = await driver.acquireConnection();
+
+        const sql = connection.formatQueryForLogging({
+            sql: "select :1 from dual",
+            parameters: [new Date("2024-01-01T00:00:00Z")],
+            query: {} as RootOperationNode,
+            queryId: { queryId: "test-id" },
+        });
+
+        expect(sql).toBe("select TO_DATE('2024-01-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS') from dual");
+    });
+    it("should format timestamp bind param for logging", async () => {
+        const dialect = new OracleDialect({
+            pool: await oracledb.createPool({
+                user: process.env.DB_USER,
+            }),
+        });
+
+        const driver = dialect.createDriver();
+
+        const connection = await driver.acquireConnection();
+
+        const sql = connection.formatQueryForLogging({
+            sql: "select :1 from dual",
+            parameters: [new Date("2024-01-01T00:00:00.100Z")],
+            query: {} as RootOperationNode,
+            queryId: { queryId: "test-id" },
+        });
+
+        expect(sql).toBe("select TO_TIMESTAMP('2024-01-01 00:00:00.100', 'YYYY-MM-DD HH24:MI:SS.FF3') from dual");
+    });
+    it("should stream rows from a query", async () => {
+        const dialect = new OracleDialect({
+            pool: await oracledb.createPool({
+                user: process.env.DB_USER,
+            }),
+        });
+
+        const driver = dialect.createDriver();
+
+        const connection = await driver.acquireConnection();
+
+        const mockRows = [{ id: 1 }, { id: 2 }, { id: 3 }];
+
+        const mockStream = {
+            [Symbol.asyncIterator]: async function* () {
+                for (const row of mockRows) {
+                    yield row;
+                }
+            },
+        };
+
+        vi.spyOn(connection.connection, "queryStream").mockReturnValue(mockStream as any);
+
+        const results: any[] = [];
+        for await (const result of connection.streamQuery({
+            sql: "select * from dual",
+            parameters: [],
+            query: {} as RootOperationNode,
+            queryId: { queryId: "test-id" },
+        })) {
+            results.push(result);
         }
 
-        expect(results).to.deep.equal([
-            { id: 0, name: 'User0' },
-            { id: 1, name: 'User1' },
-            { id: 2, name: 'User2' }
-        ]);
+        expect(results).toHaveLength(3);
+        expect(results[0]).toEqual({ rows: [{ id: 1 }] });
+        expect(results[1]).toEqual({ rows: [{ id: 2 }] });
+        expect(results[2]).toEqual({ rows: [{ id: 3 }] });
+    });
+    it("should pass compiled query execute options to oracledb execute", async () => {
+        const dialect = new OracleDialect({
+            pool: await oracledb.createPool({
+                user: process.env.DB_USER,
+            }),
+        });
+
+        const driver = dialect.createDriver();
+
+        const connection = await driver.acquireConnection();
+
+        const mockedExecute = vi.spyOn(connection.connection, "execute").mockImplementation(async () => {
+            return {
+                rows: [{ id: 1 }],
+                rowsAffected: 0,
+            };
+        });
+
+        await connection.executeQuery({
+            sql: "select * from dual",
+            parameters: [],
+            query: {} as RootOperationNode,
+            queryId: { queryId: "test-id" },
+            executeOptions: { autoCommit: true },
+        });
+
+        expect(mockedExecute).toHaveBeenCalledWith(
+            "select * from dual",
+            [],
+            expect.objectContaining({ autoCommit: true }),
+        );
+
+        mockedExecute.mockRestore();
     });
 });
