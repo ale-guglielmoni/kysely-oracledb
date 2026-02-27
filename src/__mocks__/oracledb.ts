@@ -15,6 +15,9 @@ export default {
                             rowsAffected: 0,
                         };
                     }) as unknown as Connection["execute"],
+                    queryStream: vi.fn(() => {
+                        return [].values()
+                    }) as unknown as Connection["queryStream"]
                 } as Connection);
             },
             close: vi.fn() as unknown as Pool["close"],
