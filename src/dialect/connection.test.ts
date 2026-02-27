@@ -1,20 +1,11 @@
-import { createMockStream } from 'mock-stream-util'; // Add this import to your test
+it('should properly stream rows from a query using an async iterator', async () => {
+  const stream = connection.streamQuery('SELECT * FROM users');
+  const results = [];
 
-// The original test
-it('should throw an error for stream query as it is not implemented', () => {
-  // Original test code here
-});
-
-// The newly added test case
-it('should stream rows from a query', async () => {
-  const mockStream = createMockStream([{ id: 1, name: 'Row 1' }, { id: 2, name: 'Row 2' }]); // Mock stream yielding rows
-  const results = await streamQuery(mockStream); // Call your streamQuery method
-
-  const rows = []; // Store the streamed rows
-  for await (const row of results) {
-    rows.push(row); // Collect the streamed rows
+  for await (const row of stream) {
+    results.push(row);
+    expect(row).toHaveProperty('rows'); // Verify that each result is wrapped with the rows property
   }
 
-  // Assertions to check that the rows are correctly streamed
-  expect(rows).toEqual([{ id: 1, name: 'Row 1' }, { id: 2, name: 'Row 2' }]);
+  expect(results.length).toBeGreaterThan(0); // Ensure that we received rows
 });
