@@ -111,8 +111,32 @@ export class OracleConnection implements DatabaseConnection {
         });
     }
 
-    streamQuery<R>(_compiledQuery: CompiledQuery): AsyncIterableIterator<QueryResult<R>> {
-        throw new Error("Not implemented");
+    async *streamQuery<R>(_compiledQuery: OracleCompiledQuery): AsyncIterableIterator<OracleQueryResult<R>> {
+        const { sql, bindParams } = this.formatQuery(_compiledQuery);
+
+        this.#log.debug({ sql: this.formatQueryForLogging(_compiledQuery), id: this.#identifier }, "Executing query");
+
+        const stream = this.#connection.queryStream<R>(sql, bindParams, {
+            outFormat: oracledb.OUT_FORMAT_OBJECT,
+            ...this.#executeOptions,
+            ..._compiledQuery.executeOptions,
+        });
+
+        try {
+            for await (const row of stream) {
+                yield { rows: [row] };
+            }
+        } catch (ex) {
+            if (
+                ex &&
+                typeof ex === 'object' &&
+                'code' in ex &&
+                // @ts-ignore
+                ex.code === 'ERR_STREAM_PREMATURE_CLOSE'
+            ) return
+
+            throw ex
+        }
     }
 
     get identifier(): string {
